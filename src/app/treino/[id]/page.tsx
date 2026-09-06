@@ -1,8 +1,11 @@
 "use client";
 
+import { workoutDate } from "@/lib/workout-stats";
+import HeartRateChart from "../heart-rate-chart";
+import Link from "next/link";
 import { format } from "date-fns";
 import { ptBR } from "date-fns/locale";
-import { useEffect, useState } from "react";
+import { use, useEffect, useState } from "react";
 
 export type WorkoutDetail = {
   id: string;
@@ -24,7 +27,13 @@ export type WorkoutDetail = {
   }>;
 };
 
-export default function WorkoutDetailsPage({ params }: { params: { id: string } }) {
+function formatWorkoutDateTime(value: string | null | undefined) {
+  const date = value ? workoutDate(value) : null;
+  return date ? format(date, "dd/MM/yyyy HH:mm:ss", { locale: ptBR }) : "Sem data";
+}
+
+export default function WorkoutDetailsPage({ params }: { params: Promise<{ id: string }> }) {
+  const { id } = use(params);
   const [workout, setWorkout] = useState<WorkoutDetail | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -32,13 +41,13 @@ export default function WorkoutDetailsPage({ params }: { params: { id: string } 
     const loadWorkout = async () => {
       const response = await fetch(`/api/workouts`);
       const data = (await response.json()) as WorkoutDetail[];
-      const item = data.find((entry) => entry.id === params.id) ?? null;
+      const item = data.find((entry) => entry.id === id) ?? null;
       setWorkout(item);
       setLoading(false);
     };
 
-    loadWorkout();
-  }, [params.id]);
+    void loadWorkout().catch(() => setLoading(false));
+  }, [id]);
 
   if (loading) {
     return (
@@ -60,6 +69,7 @@ export default function WorkoutDetailsPage({ params }: { params: { id: string } 
     );
   }
 
+  const activityDate = workoutDate(workout.startTime);
   const lastTrackpoint = workout.trackpoints[workout.trackpoints.length - 1];
 
   return (
@@ -72,12 +82,12 @@ export default function WorkoutDetailsPage({ params }: { params: { id: string } 
               <h1 className="mt-2 text-3xl font-bold">{workout.title}</h1>
             </div>
 
-            <a
+            <Link
               href="/"
               className="inline-flex rounded-full border border-sky-500/40 bg-sky-500/10 px-4 py-2 text-sm text-sky-100"
             >
               Voltar ao painel
-            </a>
+            </Link>
           </div>
         </header>
 
@@ -85,7 +95,7 @@ export default function WorkoutDetailsPage({ params }: { params: { id: string } 
           <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
             <p className="text-xs uppercase tracking-[0.18em] text-slate-300">Data</p>
             <p className="mt-2 font-medium">
-              {format(new Date(workout.createdAt ?? workout.startTime), "dd 'de' MMMM, yyyy", { locale: ptBR })}
+              {activityDate ? format(activityDate, "dd 'de' MMMM, yyyy", { locale: ptBR }) : "Sem data do treino"}
             </p>
           </div>
           <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4">
@@ -115,11 +125,11 @@ export default function WorkoutDetailsPage({ params }: { params: { id: string } 
               </div>
               <div className="flex justify-between rounded-2xl border border-white/10 bg-slate-950/40 p-3">
                 <span>Início</span>
-                <strong>{workout.startTime}</strong>
+                <strong>{formatWorkoutDateTime(workout.startTime)}</strong>
               </div>
               <div className="flex justify-between rounded-2xl border border-white/10 bg-slate-950/40 p-3">
                 <span>Fim</span>
-                <strong>{workout.endTime}</strong>
+                <strong>{formatWorkoutDateTime(workout.endTime)}</strong>
               </div>
               <div className="flex justify-between rounded-2xl border border-white/10 bg-slate-950/40 p-3">
                 <span>Pace médio</span>
@@ -127,27 +137,12 @@ export default function WorkoutDetailsPage({ params }: { params: { id: string } 
               </div>
               <div className="flex justify-between rounded-2xl border border-white/10 bg-slate-950/40 p-3">
                 <span>Último ponto</span>
-                <strong>{lastTrackpoint?.time ?? "Sem informação"}</strong>
+                <strong>{formatWorkoutDateTime(lastTrackpoint?.time)}</strong>
               </div>
             </div>
           </div>
 
-          <div className="rounded-3xl border border-white/10 bg-slate-900/50 p-6 shadow-xl">
-            <h2 className="mb-4 text-xl font-semibold">Pontos do percurso</h2>
-            <div className="space-y-2 text-sm text-slate-300">
-              {workout.trackpoints.slice(0, 8).map((point, index) => (
-                <div
-                  key={`${point.time ?? index}-${index}`}
-                  className="flex items-center justify-between rounded-2xl border border-white/10 bg-slate-950/40 p-3"
-                >
-                  <span>{point.time ?? `Ponto ${index + 1}`}</span>
-                  <span>
-                    {point.heartRate ? `${Math.round(point.heartRate)} bpm` : "FC não disponível"}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
+          <HeartRateChart trackpoints={workout.trackpoints} startTime={workout.startTime} endTime={workout.endTime} />
         </section>
       </div>
     </main>

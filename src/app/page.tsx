@@ -2,35 +2,13 @@
 
 import { ChangeEvent, useEffect, useState } from "react";
 
-type WorkoutSummary = {
-  title: string;
-  source: string;
-  startTime: string;
-  endTime: string;
-  durationMinutes: number;
-  distanceKm: number;
-  avgPace: string;
-  avgHeartRate: number | null;
-  createdAt?: string;
-  trackpoints: Array<{
-    latitude: number | null;
-    longitude: number | null;
-    altitude: number | null;
-    time: string | null;
-    heartRate: number | null;
-  }>;
-};
+import { importWorkout, type WorkoutSummary } from "@/lib/import-workout";
+
+import { calculateWorkoutStats } from "@/lib/workout-stats";
 
 type StoredWorkout = WorkoutSummary & {
   id: string;
 };
-
-const stats = [
-  { label: "Treinos no mês", value: "12", change: "+3 vs. mês passado" },
-  { label: "Distância total", value: "198 km", change: "+26 km" },
-  { label: "Tempo em água", value: "14h 40m", change: "+1h 25m" },
-  { label: "Ritmo médio", value: "2:08 /100m", change: "-0:06" },
-];
 
 const upcomingSessions = [
   { day: "Seg", title: "Treino de velocidade", detail: "8 x 50m + 4 x 100m" },
@@ -57,115 +35,36 @@ function formatShortDate(dateValue: string) {
   }).format(date);
 }
 
-function safeNumber(value: string | null | undefined) {
-  if (!value) return null;
-  const parsed = Number(value);
-  return Number.isFinite(parsed) ? parsed : null;
-}
-
-function parseGpx(xmlText: string): WorkoutSummary {
-  const parser = new DOMParser();
-  const xml = parser.parseFromString(xmlText, "application/xml");
-
-  const trkpts = Array.from(xml.querySelectorAll("trkpt"));
-  const trackpoints = trkpts.map((point) => ({
-    latitude: safeNumber(point.getAttribute("lat")),
-    longitude: safeNumber(point.getAttribute("lon")),
-    altitude: safeNumber(point.querySelector("ele")?.textContent ?? null),
-    time: point.querySelector("time")?.textContent ?? null,
-    heartRate: safeNumber(point.querySelector("hr")?.textContent ?? null),
-  }));
-
-  const startTime = trackpoints[0]?.time ?? "Sem data";
-  const endTime = trackpoints[trackpoints.length - 1]?.time ?? "Sem data";
-  const durationMinutes = trackpoints.length > 1 && startTime && endTime
-    ? Math.max(
-        0,
-        (new Date(endTime).getTime() - new Date(startTime).getTime()) / 60000,
-      )
-    : 0;
-
-  const heartRates = trackpoints
-    .map((point) => point.heartRate)
-    .filter((value): value is number => value !== null);
-
-  return {
-    title: "Treino importado (GPX)",
-    source: "GPX",
-    startTime,
-    endTime,
-    durationMinutes,
-    distanceKm: 0,
-    avgPace: "—",
-    avgHeartRate: heartRates.length ? heartRates.reduce((sum, value) => sum + value, 0) / heartRates.length : null,
-    trackpoints,
-  };
-}
-
-function parseTcx(xmlText: string): WorkoutSummary {
-  const parser = new DOMParser();
-  const xml = parser.parseFromString(xmlText, "application/xml");
-
-  const samples = Array.from(xml.querySelectorAll("Trackpoint"));
-  const trackpoints = samples.map((point) => ({
-    latitude: safeNumber(point.querySelector("LatitudeDegrees")?.textContent ?? null),
-    longitude: safeNumber(point.querySelector("LongitudeDegrees")?.textContent ?? null),
-    altitude: safeNumber(point.querySelector("AltitudeMeters")?.textContent ?? null),
-    time: point.querySelector("Time")?.textContent ?? null,
-    heartRate: safeNumber(point.querySelector("HeartRateBpm Value")?.textContent ?? null),
-  }));
-
-  const startTime = trackpoints[0]?.time ?? "Sem data";
-  const endTime = trackpoints[trackpoints.length - 1]?.time ?? "Sem data";
-  const durationMinutes = trackpoints.length > 1 && startTime && endTime
-    ? Math.max(
-        0,
-        (new Date(endTime).getTime() - new Date(startTime).getTime()) / 60000,
-      )
-    : 0;
-
-  const heartRates = trackpoints
-    .map((point) => point.heartRate)
-    .filter((value): value is number => value !== null);
-
-  return {
-    title: "Treino importado (TCX)",
-    source: "TCX",
-    startTime,
-    endTime,
-    durationMinutes,
-    distanceKm: 0,
-    avgPace: "—",
-    avgHeartRate: heartRates.length ? heartRates.reduce((sum, value) => sum + value, 0) / heartRates.length : null,
-    trackpoints,
-  };
-}
-
-function parseFit(fileName: string): never {
-  throw new Error(
-    `${fileName} está em formato FIT. Esse tipo de importação exige uma etapa adicional de parser binário e ainda não está habilitada nesta versão inicial.`,
-  );
-}
-
 export default function Home() {
   const [isLoading, setIsLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [workout, setWorkout] = useState<WorkoutSummary | null>(null);
   const [history, setHistory] = useState<StoredWorkout[]>([]);
 
-  const fetchHistory = async () => {
-    const response = await fetch("/api/workouts");
-    const data = (await response.json()) as StoredWorkout[];
-    setHistory(data);
-  };
+  const totals = calculateWorkoutStats(history);
+  const stats = [
+    { label: "Treinos no m\u00eas", value: String(totals.monthlyCount), change: "Pela data do treino, no m\u00eas atual" },
+    { label: "Dist\u00e2ncia total", value: totals.distanceKm.toLocaleString("pt-BR", { maximumFractionDigits: 3 }) + " km", change: "Todo o hist\u00f3rico importado" },
+    { label: "Tempo em \u00e1gua", value: formatMinutes(totals.durationMinutes), change: "Todo o hist\u00f3rico importado" },
+    { label: "Ritmo m\u00e9dio", value: totals.avgPace, change: "Ponderado pela dist\u00e2ncia dos treinos" },
+  ];
 
   useEffect(() => {
-    fetchHistory();
+    let active = true;
+    fetch("/api/workouts").then(async response => {
+      if (!response.ok) throw new Error("Falha ao carregar o hist\u00f3rico.");
+      const data = await response.json() as StoredWorkout[];
+      if (active) setHistory(data);
+    }).catch(() => {
+      if (active) setError("Falha ao carregar o hist\u00f3rico.");
+    });
+    return () => { active = false; };
   }, []);
 
   const handleFileChange = async (event: ChangeEvent<HTMLInputElement>) => {
     const file = event.target.files?.[0];
 
+    event.target.value = "";
     if (!file) return;
 
     setIsLoading(true);
@@ -173,20 +72,7 @@ export default function Home() {
     setWorkout(null);
 
     try {
-      const text = await file.text();
-      const lowerName = file.name.toLowerCase();
-
-      let parsedWorkout: WorkoutSummary;
-
-      if (lowerName.endsWith(".gpx")) {
-        parsedWorkout = parseGpx(text);
-      } else if (lowerName.endsWith(".tcx")) {
-        parsedWorkout = parseTcx(text);
-      } else if (lowerName.endsWith(".fit")) {
-        parsedWorkout = parseFit(file.name);
-      } else {
-        throw new Error("Formato não suportado. Envie um arquivo GPX, TCX ou FIT.");
-      }
+      const parsedWorkout = await importWorkout(file);
 
       const response = await fetch("/api/workouts", {
         method: "POST",
@@ -204,8 +90,9 @@ export default function Home() {
         throw new Error(payload?.error ?? "Não foi possível salvar este treino.");
       }
 
-      setWorkout(parsedWorkout);
-      await fetchHistory();
+      const saved = (await response.json()) as StoredWorkout;
+      setWorkout(saved);
+      setHistory(current => [saved, ...current]);
     } catch (uploadError) {
       setError(
         uploadError instanceof Error
@@ -228,7 +115,7 @@ export default function Home() {
 
           <div className="flex items-center gap-3 rounded-full border border-sky-400/30 bg-sky-500/10 px-4 py-2 text-sm text-sky-100">
             <span className="inline-block h-2.5 w-2.5 rounded-full bg-emerald-400" />
-            Garmin Connect em preparo
+            Importação manual Garmin
           </div>
         </header>
 
@@ -280,26 +167,19 @@ export default function Home() {
 
               <label className="mt-5 flex cursor-pointer flex-col items-center justify-center rounded-2xl border border-dashed border-sky-500/40 bg-sky-500/5 px-6 py-8 text-center transition hover:border-sky-400 hover:bg-sky-500/10">
                 <span className="text-base font-medium text-sky-100">
-                  {isLoading ? "Importando..." : "Selecionar arquivo GPX / TCX / FIT"}
+                  {isLoading ? "Importando..." : "Selecionar arquivo ZIP / GPX / TCX / FIT"}
                 </span>
                 <span className="mt-2 text-sm text-slate-300">
-                  Ideal para testar a conexão com dados exportados do Garmin Connect.
+                  Selecione o ZIP exportado do Garmin Connect ou um arquivo GPX, TCX ou FIT (até 20 MB).
                 </span>
                 <input
                   type="file"
-                  accept=".gpx,.tcx,.fit"
+                  accept=".zip,.gpx,.tcx,.fit"
                   className="hidden"
                   onChange={handleFileChange}
                   disabled={isLoading}
                 />
               </label>
-
-              <a
-                href="/api/garmin/connect"
-                className="mt-4 inline-flex w-full items-center justify-center rounded-2xl border border-emerald-500/40 bg-emerald-500/10 px-4 py-3 text-sm font-medium text-emerald-100 transition hover:bg-emerald-500/15"
-              >
-                Conectar conta Garmin Connect
-              </a>
 
               {error ? (
                 <div className="mt-4 rounded-2xl border border-red-400/50 bg-red-500/10 p-4 text-sm text-red-200">
@@ -310,6 +190,7 @@ export default function Home() {
               {workout ? (
                 <div className="mt-5 rounded-2xl border border-emerald-400/30 bg-emerald-500/10 p-4">
                   <p className="text-sm text-emerald-200">Treino importado com sucesso</p>
+                  <p className="mt-2 text-sm">{workout.distanceKm} km / {workout.avgPace}</p>
                   <div className="mt-3 grid gap-3 sm:grid-cols-2">
                     <div>
                       <p className="text-xs uppercase tracking-[0.16em] text-slate-300">Nome</p>
@@ -350,7 +231,7 @@ export default function Home() {
                     >
                       <div>
                         <p className="font-medium">{item.title}</p>
-                        <p className="text-xs text-slate-400">{formatShortDate(item.createdAt ?? item.startTime)}</p>
+                        <p className="text-xs text-slate-400">{formatShortDate(item.startTime)}</p>
                       </div>
                       <div className="text-right">
                         <p className="font-medium text-sky-200">{item.distanceKm ? `${item.distanceKm} km` : `${Math.round(item.durationMinutes)} min`}</p>
